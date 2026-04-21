@@ -9,6 +9,9 @@ import java.util.stream.Stream;
 
 import net.minecraft.command.argument.ItemStackArgument;
 import net.minecraft.component.ComponentChanges;
+import dev.emi.emi.api.stack.SearchEmiIngredient;
+import dev.emi.emi.runtime.*;
+import net.minecraft.client.util.math.MatrixStack;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4fStack;
 import org.lwjgl.glfw.GLFW;
@@ -56,16 +59,6 @@ import dev.emi.emi.registry.EmiExclusionAreas;
 import dev.emi.emi.registry.EmiRecipeFiller;
 import dev.emi.emi.registry.EmiRecipes;
 import dev.emi.emi.registry.EmiStackProviders;
-import dev.emi.emi.runtime.EmiDrawContext;
-import dev.emi.emi.runtime.EmiFavorite;
-import dev.emi.emi.runtime.EmiFavorites;
-import dev.emi.emi.runtime.EmiHidden;
-import dev.emi.emi.runtime.EmiHistory;
-import dev.emi.emi.runtime.EmiLog;
-import dev.emi.emi.runtime.EmiProfiler;
-import dev.emi.emi.runtime.EmiReloadLog;
-import dev.emi.emi.runtime.EmiReloadManager;
-import dev.emi.emi.runtime.EmiSidebars;
 import dev.emi.emi.screen.tooltip.RecipeTooltipComponent;
 import dev.emi.emi.screen.widget.EmiSearchWidget;
 import dev.emi.emi.screen.widget.SidebarButtonWidget;
@@ -81,7 +74,6 @@ import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.tooltip.TooltipComponent;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.sound.PositionedSoundInstance;
-import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.Slot;
@@ -863,7 +855,7 @@ public class EmiScreenManager {
 		}
 		Set<Slot> ignoredSlots = Sets.newHashSet();
 		Set<EmiStack> synfavs = Sets.newHashSet();
-		if (BoM.craftingMode && BoM.tree != null) {
+		if (BoM.craftingMode && BoM.getTree() != null) {
 			List<EmiFavorite.Synthetic> syntheticFavorites = EmiFavorites.syntheticFavorites;
 			for (EmiFavorite.Synthetic fav : syntheticFavorites) {
 				synfavs.addAll(fav.getEmiStacks());
@@ -892,13 +884,13 @@ public class EmiScreenManager {
 				context.push();
 				context.matrices().translate(0, 0, 300);
 				if (query != null) {
-					if (!query.test(stack)) {
-						context.fill(slot.x - 1, slot.y - 1, 18, 18, 0x77000000);
-					}
-				} else if (BoM.craftingMode && BoM.tree != null) {
-					if (!(slot.inventory instanceof PlayerInventory) && !ignoredSlots.contains(slot) && synfavs.contains(stack)) {
-						context.fill(slot.x - 1, slot.y - 1, 18, 18, 0x7700BBFF);
-					}
+ 				if (!query.test(stack)) {
+ 					context.fill(slot.x - 1, slot.y - 1, 18, 18, 0x77000000);
+ 				}
+ 			} else if (BoM.craftingMode && BoM.getTree() != null) {
+ 				if (!(slot.inventory instanceof PlayerInventory) && !ignoredSlots.contains(slot) && synfavs.contains(stack)) {
+ 					context.fill(slot.x - 1, slot.y - 1, 18, 18, 0x7700BBFF);
+ 				}
 				}
 				context.pop();
 			}
@@ -1071,6 +1063,34 @@ public class EmiScreenManager {
 					}
 				} else {
 					EmiStackInteraction hovered = getHoveredStack((int) mouseX, (int) mouseY, !isClickClicky(button));
+
+					if (panel != null) {
+						ScreenSpace space = panel.getHoveredSpace(mx, my);
+						if (space != null) {
+  					if (space.getType() == SidebarType.BOOKMARKS && pressedStack instanceof SearchEmiIngredient bookmark) {
+  						if (button == 1) {
+  							EmiBookmarks.removeBookmark(bookmark);
+  						} else if (bookmark.getContent() != null) {
+  							EmiApi.setSearchText(bookmark.getContent());
+  							EmiPort.focus(search, true);
+  						}
+  						return true;
+  					} else if (space.getType() == SidebarType.TREE_BOOKMARKS && pressedStack instanceof EmiTreeBookmarks.TreeBookmark treeBookmark) {
+  						if (EmiConfig.renameTreeBookmark.matchesMouse(button)) {
+  							String suggested = treeBookmark.getName();
+  							client.setScreen(new TreeBookmarkNameScreen(client.currentScreen, suggested, name ->
+  								EmiTreeBookmarks.renameBookmark(treeBookmark, name)));
+  						} else if (button == 1) {
+  							EmiTreeBookmarks.removeBookmark(treeBookmark);
+  						} else {
+  							EmiTreeBookmarks.apply(treeBookmark);
+							EmiApi.viewRecipeTree();
+  						}
+  						return true;
+  					}
+   			}
+   		}
+
 					if (draggedStack.isEmpty() && stackInteraction(hovered, bind -> bind.matchesMouse(button))) {
 						return true;
 					}
@@ -1241,7 +1261,7 @@ public class EmiScreenManager {
 			} else if (function.apply(EmiConfig.viewUses)) {
 				EmiApi.displayUses(ingredient);
 				return true;
-			} else if (function.apply(EmiConfig.favorite)) {
+			} else if (function.apply(EmiConfig.favorite) && !(ingredient instanceof SearchEmiIngredient)) {
 				EmiFavorites.addFavorite(ingredient, stack.getRecipeContext());
 				repopulatePanels(SidebarType.FAVORITES);
 				return true;

@@ -1,8 +1,10 @@
 package dev.emi.emi.bom;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.gson.JsonArray;
@@ -12,6 +14,7 @@ import com.google.gson.JsonPrimitive;
 
 import dev.emi.emi.EmiPort;
 import dev.emi.emi.api.EmiApi;
+import dev.emi.emi.api.recipe.EmiPlayerInventory;
 import dev.emi.emi.api.recipe.EmiRecipe;
 import dev.emi.emi.api.recipe.EmiResolutionRecipe;
 import dev.emi.emi.api.stack.EmiIngredient;
@@ -26,7 +29,10 @@ import net.minecraft.util.JsonHelper;
 
 public class BoM {
 	private static RecipeDefaults defaults = new RecipeDefaults();
-	public static MaterialTree tree;
+	public static List<MaterialTree> trees = Lists.newArrayList();
+	public static int treeIndex = -1;
+	public static TreeCost combinedCost = new TreeCost();
+	public static TreeCost combinedProgress = new TreeCost();
 	public static Map<EmiIngredient, EmiRecipe> defaultRecipes = Maps.newHashMap();
 	public static Map<EmiIngredient, EmiRecipe> addedRecipes = Maps.newHashMap();
 	public static Set<EmiRecipe> disabledRecipes = Sets.newHashSet();
@@ -166,12 +172,70 @@ public class BoM {
 	}
 
 	public static void setGoal(EmiRecipe recipe) {
-		tree = new MaterialTree(recipe);
+		trees.clear();
+		trees.add(new MaterialTree(recipe));
+		treeIndex = 0;
 		craftingMode = false;
+		recalculate();
+	}
+
+   	public static void addGoal(EmiRecipe recipe) {
+		if (trees.isEmpty()) {
+			setGoal(recipe);
+			return;
+		}
+		trees.add(new MaterialTree(recipe));
+		treeIndex = trees.size() - 1;
+		recalculate();
+	}
+
+   	public static MaterialTree getTree() {
+		if (treeIndex < 0 || treeIndex >= trees.size()) {
+			return null;
+		}
+		return trees.get(treeIndex);
+	}
+
+   	public static List<MaterialTree> getTrees() {
+		return trees;
+	}
+
+   	public static void selectTree(int index) {
+		if (trees.isEmpty()) {
+			treeIndex = -1;
+			return;
+		}
+		treeIndex = Math.max(0, Math.min(index, trees.size() - 1));
+	}
+
+   	public static void cycleTree(int delta) {
+		if (trees.isEmpty()) {
+			treeIndex = -1;
+			return;
+		}
+		int size = trees.size();
+		treeIndex = ((treeIndex + delta) % size + size) % size;
+	}
+
+   	public static void removeTree(int index) {
+		if (index < 0 || index >= trees.size()) {
+			return;
+		}
+		trees.remove(index);
+		if (trees.isEmpty()) {
+			treeIndex = -1;
+			craftingMode = false;
+		} else {
+			treeIndex = Math.max(0, Math.min(treeIndex, trees.size() - 1));
+		}
+		recalculate();
 	}
 
 	public static void addResolution(EmiIngredient ingredient, EmiRecipe recipe) {
-		tree.addResolution(ingredient, recipe);
+		MaterialTree tree = getTree();
+		if (tree != null) {
+			tree.addResolution(ingredient, recipe);
+		}
 	}
 
 	public static boolean isDefaultRecipe(EmiIngredient stack, EmiRecipe recipe) {
@@ -227,11 +291,51 @@ public class BoM {
 		recalculate();
 	}
 
-	private static void recalculate() {
-		if (tree != null) {
-			tree.recalculate();
+	public static void calculateCombinedCosts(EmiPlayerInventory inventory) {
+		combinedProgress.clear();
+		Map<EmiStack, EmiStack> sharedInventory = Maps.newHashMap();
+		for (EmiStack stack : inventory.inventory.values()) {
+			sharedInventory.put(stack, stack.copy());
+		}
+		for (MaterialTree tree : trees) {
+			EmiPlayerInventory shared = createInventoryFromStacks(sharedInventory);
+			tree.calculateProgress(shared);
+			combinedProgress.merge(tree.cost);
+
+			Map<EmiStack, EmiStack> updatedInventory = Maps.newHashMap();
+			for (Map.Entry<EmiStack, EmiStack> entry : sharedInventory.entrySet()) {
+				EmiStack key = entry.getKey();
+				long before = entry.getValue().getAmount();
+				FlatMaterialCost remainder = tree.cost.remainders.get(key);
+				long after = remainder == null ? 0 : Math.min(before, remainder.amount);
+				if (after > 0) {
+					updatedInventory.put(key, entry.getValue().copy().setAmount(after));
+				}
+			}
+			sharedInventory = updatedInventory;
+		}
+		combinedCost.clear();
+		for (MaterialTree tree : trees) {
+			tree.calculateCost();
+			combinedCost.merge(tree.cost);
 		}
 	}
+
+	private static EmiPlayerInventory createInventoryFromStacks(Map<EmiStack, EmiStack> stacks) {
+		EmiPlayerInventory shared = new EmiPlayerInventory(List.of());
+		shared.inventory.clear();
+		for (EmiStack stack : stacks.values()) {
+			EmiStack copy = stack.copy();
+			shared.inventory.put(copy, copy);
+		}
+		return shared;
+	}
+
+    private static void recalculate() {
+        for (MaterialTree tree : trees) {
+            tree.recalculate();
+        }
+    }
 
 	public static enum DefaultStatus {
 		EMPTY,

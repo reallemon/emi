@@ -13,6 +13,8 @@ public enum SidebarType implements ConfigEnum {
 	CRAFT_HISTORY("craft-history", 64, 146),
 	EMPTY("empty", 96, 146),
 	CHESS("chess", 48, 146),
+	BOOKMARKS("bookmarks", 112, 146),
+	TREE_BOOKMARKS("tree_bookmarks", 128, 146),
 	;
 	
 	private final String name;
